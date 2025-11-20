@@ -200,6 +200,60 @@ class BART(Distribution):
         mean = pt.fill(size, rv.Y.mean())
         return mean
 
+    def predict(self, X: TensorLike, trace=None, size: int = 100, random_seed: int | None = None) -> npt.NDArray:
+        """
+        Generate predictions from BART model.
+
+        Parameters
+        ----------
+        X : TensorLike
+            New input data for prediction
+        trace : arviz InferenceData, optional
+            Trace from posterior sampling. If None, uses stored all_trees.
+        size : int
+            Number of posterior samples to draw. Defaults to 100.
+        random_seed : Optional[int]
+            Random seed for reproducibility.
+
+        Returns
+        -------
+        npt.NDArray
+            Predictions of shape (n_samples, n_observations) or (n_observations,) if size=1
+        """
+        rng = np.random.default_rng(random_seed)
+        
+        if isinstance(X, (np.ndarray, DataFrame, Series)):
+            X_pred = preprocess_xy(X, np.zeros(1))[0]
+        else:
+            X_pred = X.eval() if isinstance(X, (TensorVariable, TensorSharedVariable)) else X
+
+        # Get trees from trace or stored all_trees
+        if trace is not None:
+            from arviz import InferenceData
+            if isinstance(trace, InferenceData):
+                # Extract BART trees from trace if available
+                all_trees = self.rv_op.all_trees
+            else:
+                raise ValueError("trace must be an arviz InferenceData object")
+        else:
+            all_trees = self.rv_op.all_trees
+
+        if not all_trees:
+            # Return mean predictions if no trees available
+            return np.full((size, X_pred.shape[0]), self.rv_op.Y.mean())
+
+        # Generate predictions by sampling from posterior
+        predictions = _sample_posterior(
+            all_trees=list(all_trees),
+            X=X_pred,
+            rng=rng,
+            size=size,
+            excluded=None,
+            shape=1,
+        )
+
+        return predictions.squeeze()
+
 
 def preprocess_xy(X: TensorLike, Y: TensorLike) -> tuple[npt.NDArray, npt.NDArray]:
     if isinstance(Y, (Series, DataFrame)):
